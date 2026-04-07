@@ -7,74 +7,104 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Inter', -apple-system, sans-serif; background: #0a0a0a; color: #e5e5e5; }
-    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-    h1 { font-size: 24px; margin-bottom: 20px; color: #fff; }
-    h2 { font-size: 16px; margin-bottom: 12px; color: #a1a1aa; text-transform: uppercase; letter-spacing: 1px; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 22px; margin-bottom: 16px; color: #fff; }
+    h2 { font-size: 13px; margin-bottom: 8px; color: #a1a1aa; text-transform: uppercase; letter-spacing: 1px; }
 
-    .grid { display: grid; grid-template-columns: 350px 1fr; gap: 20px; }
-    .panel { background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 20px; }
+    .grid { display: grid; grid-template-columns: 320px 1fr 360px; gap: 16px; }
+    .panel { background: #18181b; border: 1px solid #27272a; border-radius: 10px; padding: 16px; }
 
-    label { display: block; font-size: 13px; color: #a1a1aa; margin-bottom: 4px; }
-    input[type="file"], input[type="text"] {
-      width: 100%; padding: 8px 12px; background: #27272a; border: 1px solid #3f3f46;
-      border-radius: 8px; color: #fff; font-size: 14px; margin-bottom: 12px;
+    label { display: block; font-size: 12px; color: #a1a1aa; margin-bottom: 3px; }
+    input[type="file"], input[type="text"], select {
+      width: 100%; padding: 7px 10px; background: #27272a; border: 1px solid #3f3f46;
+      border-radius: 6px; color: #fff; font-size: 13px; margin-bottom: 10px;
     }
-    select {
-      width: 100%; padding: 8px 12px; background: #27272a; border: 1px solid #3f3f46;
-      border-radius: 8px; color: #fff; font-size: 14px; margin-bottom: 12px;
-    }
-    input[type="range"] { width: 100%; margin-bottom: 4px; }
-    .range-row { margin-bottom: 12px; }
-    .range-row span { font-size: 12px; color: #71717a; float: right; }
+    input[type="range"] { width: 100%; margin-bottom: 3px; accent-color: #7c3aed; }
+    .range-row { margin-bottom: 10px; }
+    .range-row span { font-size: 11px; color: #71717a; float: right; }
 
     button {
-      width: 100%; padding: 10px; background: #7c3aed; border: none; border-radius: 8px;
-      color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 8px;
+      width: 100%; padding: 9px; background: #7c3aed; border: none; border-radius: 7px;
+      color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; margin-bottom: 6px;
     }
     button:hover { background: #6d28d9; }
     button:disabled { background: #3f3f46; cursor: not-allowed; }
     button.secondary { background: #27272a; border: 1px solid #3f3f46; }
     button.secondary:hover { background: #3f3f46; }
+    button.render-btn { background: #059669; }
+    button.render-btn:hover { background: #047857; }
 
     .preview-area {
       position: relative; background: #000; border-radius: 8px; overflow: hidden;
-      min-height: 400px; display: flex; align-items: center; justify-content: center;
+      display: flex; align-items: center; justify-content: center;
     }
-    .preview-area img { max-width: 100%; max-height: 600px; }
-    .preview-area canvas { position: absolute; top: 0; left: 0; }
+    .preview-area canvas { display: block; max-width: 100%; }
 
-    .status { font-size: 13px; color: #a1a1aa; margin: 8px 0; }
+    /* Result preview - simulates final output */
+    .result-preview {
+      background: #000; border-radius: 8px; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .result-preview canvas { display: block; }
+
+    .status { font-size: 12px; color: #a1a1aa; margin: 6px 0; }
     .status.error { color: #ef4444; }
     .status.success { color: #22c55e; }
 
+    .indicator {
+      display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+      background: #27272a; border-radius: 6px; margin-bottom: 4px; font-size: 12px;
+    }
+    .indicator .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .indicator .label { color: #a1a1aa; flex: 1; }
+    .indicator .value { color: #fff; font-weight: 600; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    }
+    .badge.good { background: #065f46; color: #34d399; }
+    .badge.warn { background: #713f12; color: #fbbf24; }
+    .badge.bad { background: #7f1d1d; color: #fca5a5; }
+
+    .face-card {
+      padding: 8px; background: #27272a; border-radius: 6px; margin-bottom: 4px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .face-card .color-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    .nav-bar { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+    .nav-bar button { width: auto; padding: 6px 14px; font-size: 12px; }
+    .nav-bar .info { flex: 1; text-align: right; font-size: 11px; color: #71717a; }
+
+    .divider { border-top: 1px solid #27272a; margin: 12px 0; }
+
     .json-output {
-      background: #0f0f10; border: 1px solid #27272a; border-radius: 8px; padding: 12px;
-      font-family: monospace; font-size: 12px; color: #a1a1aa; max-height: 300px;
-      overflow-y: auto; white-space: pre-wrap; margin-top: 12px;
+      background: #0f0f10; border: 1px solid #27272a; border-radius: 6px; padding: 8px;
+      font-family: monospace; font-size: 11px; color: #71717a; max-height: 200px;
+      overflow-y: auto; white-space: pre-wrap;
     }
 
-    .timeline {
-      height: 60px; background: #18181b; border: 1px solid #27272a; border-radius: 8px;
-      margin-top: 12px; position: relative; overflow: hidden;
+    .format-selector { display: flex; gap: 6px; margin-bottom: 10px; }
+    .format-btn {
+      flex: 1; padding: 8px; background: #27272a; border: 2px solid #3f3f46;
+      border-radius: 6px; color: #a1a1aa; font-size: 12px; font-weight: 600;
+      cursor: pointer; text-align: center;
     }
-    .timeline .bar { height: 100%; position: absolute; top: 0; opacity: 0.5; border-radius: 4px; }
-    .timeline .scrubber {
-      position: absolute; top: 0; width: 2px; height: 100%; background: #7c3aed; z-index: 10;
-    }
+    .format-btn.active { border-color: #7c3aed; color: #fff; background: #27272a; }
 
-    .faces-list { margin-top: 12px; }
-    .face-item {
-      display: flex; align-items: center; gap: 8px; padding: 8px;
-      background: #27272a; border-radius: 8px; margin-bottom: 4px;
+    .split-preview {
+      display: flex; flex-direction: column; gap: 2px; background: #000;
+      border-radius: 8px; overflow: hidden;
     }
-    .face-item .dot { width: 12px; height: 12px; border-radius: 50%; }
-    .face-item .info { font-size: 12px; }
+    .split-preview canvas { width: 100%; display: block; }
 
-    .divider { border-top: 1px solid #27272a; margin: 16px 0; }
-
-    @media (max-width: 768px) {
-      .grid { grid-template-columns: 1fr; }
+    .progress-bar {
+      height: 4px; background: #27272a; border-radius: 2px; margin: 8px 0; overflow: hidden;
     }
+    .progress-bar .fill { height: 100%; background: #7c3aed; transition: width 0.3s; border-radius: 2px; }
+
+    @media (max-width: 1200px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -82,24 +112,26 @@
     <h1>🔬 Face Detection Lab</h1>
 
     <div class="grid">
-      <!-- Left Panel: Controls -->
+      <!-- Left: Controls -->
       <div>
         <div class="panel">
           <h2>Video</h2>
-          <label>Upload video</label>
           <input type="file" id="videoFile" accept="video/*">
-
-          <label>Ou start/end (segundos)</label>
-          <div style="display:flex;gap:8px">
-            <input type="text" id="startTime" placeholder="0" style="width:50%">
-            <input type="text" id="endTime" placeholder="30" style="width:50%">
+          <div style="display:flex;gap:6px">
+            <input type="text" id="startTime" placeholder="Start (s)" style="width:50%">
+            <input type="text" id="endTime" placeholder="End (s)" style="width:50%">
           </div>
-
           <button id="btnUpload">Upload</button>
           <div id="uploadStatus" class="status"></div>
         </div>
 
-        <div class="panel" style="margin-top:12px">
+        <div class="panel" style="margin-top:10px">
+          <h2>Formato de Saída</h2>
+          <div class="format-selector">
+            <div class="format-btn active" data-format="9:16" onclick="setFormat('9:16')">9:16<br><span style="font-size:10px;color:#71717a">TikTok</span></div>
+            <div class="format-btn" data-format="16:9" onclick="setFormat('16:9')">16:9<br><span style="font-size:10px;color:#71717a">YouTube</span></div>
+          </div>
+
           <h2>Modo</h2>
           <select id="mode">
             <option value="auto">Automático (Facial)</option>
@@ -108,81 +140,129 @@
           </select>
 
           <div class="divider"></div>
-          <h2>Parâmetros</h2>
+          <h2>Ajustes</h2>
 
           <div class="range-row">
             <label>Sample FPS <span id="sampleFpsVal">2</span></label>
             <input type="range" id="sampleFps" min="0.5" max="10" step="0.5" value="2">
           </div>
-
           <div class="range-row">
-            <label>Zoom Level <span id="zoomVal">1.0</span></label>
+            <label>Zoom <span id="zoomVal">1.0</span></label>
             <input type="range" id="zoomLevel" min="0.5" max="3.0" step="0.1" value="1.0">
           </div>
-
           <div class="range-row">
-            <label>Face Padding <span id="paddingVal">0.30</span></label>
+            <label>Padding <span id="paddingVal">0.30</span></label>
             <input type="range" id="focusPadding" min="0.05" max="1.0" step="0.05" value="0.30">
           </div>
 
           <div class="divider"></div>
-          <h2>Suavização (One Euro)</h2>
-
+          <h2>Suavização</h2>
           <div class="range-row">
-            <label>Min Cutoff (jitter) <span id="minCutoffVal">0.05</span></label>
+            <label>Jitter (min cutoff) <span id="minCutoffVal">0.05</span></label>
             <input type="range" id="smoothMinCutoff" min="0.001" max="1.0" step="0.001" value="0.05">
           </div>
-
           <div class="range-row">
-            <label>Beta (lag) <span id="betaVal">0.01</span></label>
+            <label>Lag (beta) <span id="betaVal">0.01</span></label>
             <input type="range" id="smoothBeta" min="0.001" max="0.5" step="0.001" value="0.01">
           </div>
 
           <div class="divider"></div>
-          <h2>Speaker Detection</h2>
-
+          <h2>Speaker</h2>
           <div class="range-row">
             <label>MAR Threshold <span id="marVal">0.35</span></label>
             <input type="range" id="marThreshold" min="0.1" max="0.8" step="0.05" value="0.35">
           </div>
 
           <div class="divider"></div>
-          <button id="btnAnalyze" disabled>Analisar Faces</button>
-          <button id="btnReSmooth" class="secondary" disabled>Re-Suavizar</button>
+          <button id="btnAnalyze" disabled>🔍 Analisar Faces</button>
+          <button id="btnRender" class="render-btn" disabled>🎬 Render Preview (5s)</button>
+          <div class="progress-bar" id="progressBar" style="display:none"><div class="fill" id="progressFill"></div></div>
           <div id="analyzeStatus" class="status"></div>
         </div>
       </div>
 
-      <!-- Right Panel: Preview -->
+      <!-- Center: Source Preview + Result Preview -->
       <div>
         <div class="panel">
-          <h2>Preview</h2>
+          <h2>Source Video (detecção)</h2>
           <div class="preview-area" id="previewArea">
-            <canvas id="previewCanvas"></canvas>
-            <span style="color:#52525b">Upload um vídeo para começar</span>
+            <canvas id="previewCanvas" width="640" height="360"></canvas>
           </div>
-
-          <div class="timeline" id="timeline"></div>
-
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button id="btnPrev" class="secondary" style="width:auto;padding:8px 16px">← Prev</button>
-            <button id="btnNext" class="secondary" style="width:auto;padding:8px 16px">Next →</button>
-            <button id="btnPlay" class="secondary" style="width:auto;padding:8px 16px">▶ Play</button>
-            <span id="frameInfo" style="flex:1;text-align:right;font-size:12px;color:#71717a;line-height:36px"></span>
+          <div class="nav-bar">
+            <button class="secondary" id="btnPrev">←</button>
+            <button class="secondary" id="btnPlay">▶</button>
+            <button class="secondary" id="btnNext">→</button>
+            <span class="info" id="frameInfo">Nenhum frame</span>
           </div>
         </div>
 
-        <div class="panel" style="margin-top:12px">
-          <h2>Faces Detectadas</h2>
-          <div id="facesList" class="faces-list">
-            <span style="color:#52525b;font-size:13px">Nenhuma face detectada</span>
+        <div class="panel" style="margin-top:10px">
+          <h2>Resultado Final (preview)</h2>
+          <div id="resultContainer">
+            <div class="result-preview" id="resultPreview">
+              <canvas id="resultCanvas" width="270" height="480"></canvas>
+            </div>
+            <div id="renderStatus" class="status" style="margin-top:6px"></div>
+          </div>
+          <!-- Rendered video preview -->
+          <video id="renderedVideo" controls style="display:none;width:100%;border-radius:8px;margin-top:8px"></video>
+        </div>
+      </div>
+
+      <!-- Right: Indicators + Faces + JSON -->
+      <div>
+        <div class="panel">
+          <h2>Indicadores de Qualidade</h2>
+          <div id="indicators">
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Faces detectadas</span>
+              <span class="value" id="indFaces">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Confiança média</span>
+              <span class="value" id="indConfidence">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Estabilidade tracking</span>
+              <span class="value" id="indStability">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Speaker detectado</span>
+              <span class="value" id="indSpeaker">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">MAR médio speaker</span>
+              <span class="value" id="indMAR">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Cobertura de frames</span>
+              <span class="value" id="indCoverage">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Layout recomendado</span>
+              <span class="value" id="indLayout">—</span>
+            </div>
           </div>
         </div>
 
-        <div class="panel" style="margin-top:12px">
-          <h2>Crop Data (JSON)</h2>
+        <div class="panel" style="margin-top:10px">
+          <h2>Faces Rastreadas</h2>
+          <div id="facesList">
+            <span style="color:#52525b;font-size:12px">Analise um vídeo primeiro</span>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:10px">
+          <h2>Crop Data</h2>
           <div id="jsonOutput" class="json-output">Sem dados</div>
-          <button id="btnCopyJson" class="secondary" style="margin-top:8px">Copiar JSON</button>
+          <button id="btnCopyJson" class="secondary" style="margin-top:6px">Copiar JSON</button>
         </div>
       </div>
     </div>

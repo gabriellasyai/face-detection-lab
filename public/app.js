@@ -1,45 +1,45 @@
-// State
 let videoInfo = null;
 let analysisResult = null;
 let currentFrameIdx = 0;
 let playInterval = null;
+let outputFormat = '9:16';
 
-// Elements
 const $ = id => document.getElementById(id);
 
-// Range sliders → display values
-['sampleFps', 'zoomLevel', 'focusPadding', 'smoothMinCutoff', 'smoothBeta', 'marThreshold'].forEach(id => {
+// Range slider values
+['sampleFps','zoomLevel','focusPadding','smoothMinCutoff','smoothBeta','marThreshold'].forEach(id => {
   const el = $(id);
-  const valId = {
-    sampleFps: 'sampleFpsVal', zoomLevel: 'zoomVal', focusPadding: 'paddingVal',
-    smoothMinCutoff: 'minCutoffVal', smoothBeta: 'betaVal', marThreshold: 'marVal',
-  }[id];
-  el.addEventListener('input', () => {
-    $(valId).textContent = parseFloat(el.value).toFixed(el.step.includes('.0') ? 1 : el.step.split('.')[1]?.length || 2);
-  });
+  const map = {sampleFps:'sampleFpsVal',zoomLevel:'zoomVal',focusPadding:'paddingVal',smoothMinCutoff:'minCutoffVal',smoothBeta:'betaVal',marThreshold:'marVal'};
+  el.addEventListener('input', () => $(map[id]).textContent = parseFloat(el.value).toFixed(el.step.length > 3 ? 3 : 2));
 });
+
+// Format selector
+window.setFormat = function(fmt) {
+  outputFormat = fmt;
+  document.querySelectorAll('.format-btn').forEach(b => b.classList.toggle('active', b.dataset.format === fmt));
+  // Update result canvas aspect ratio
+  const rc = $('resultCanvas');
+  if (fmt === '9:16') { rc.width = 270; rc.height = 480; }
+  else { rc.width = 480; rc.height = 270; }
+  if (analysisResult) renderResultFrame();
+};
 
 // Upload
 $('btnUpload').addEventListener('click', async () => {
   const file = $('videoFile').files[0];
   if (!file) return;
-
   $('uploadStatus').textContent = 'Enviando...';
   $('uploadStatus').className = 'status';
-
   const form = new FormData();
   form.append('video', file);
-
   try {
     const resp = await fetch('/api/upload', { method: 'POST', body: form });
     videoInfo = await resp.json();
     if (videoInfo.error) throw new Error(videoInfo.error);
-
-    $('uploadStatus').textContent = `${videoInfo.width}x${videoInfo.height}, ${videoInfo.duration.toFixed(1)}s, ${videoInfo.fps.toFixed(0)}fps`;
+    $('uploadStatus').textContent = `${videoInfo.width}×${videoInfo.height}, ${videoInfo.duration.toFixed(1)}s`;
     $('uploadStatus').className = 'status success';
     $('btnAnalyze').disabled = false;
-
-    if (!$('endTime').value) $('endTime').value = Math.min(30, videoInfo.duration).toFixed(0);
+    if (!$('endTime').value) $('endTime').value = Math.min(20, videoInfo.duration).toFixed(0);
   } catch (e) {
     $('uploadStatus').textContent = e.message;
     $('uploadStatus').className = 'status error';
@@ -49,11 +49,10 @@ $('btnUpload').addEventListener('click', async () => {
 // Analyze
 $('btnAnalyze').addEventListener('click', async () => {
   if (!videoInfo) return;
-
-  $('analyzeStatus').textContent = 'Analisando faces...';
-  $('analyzeStatus').className = 'status';
+  $('analyzeStatus').textContent = 'Analisando...';
+  $('progressBar').style.display = 'block';
+  $('progressFill').style.width = '30%';
   $('btnAnalyze').disabled = true;
-
   try {
     const resp = await fetch('/api/analyze', {
       method: 'POST',
@@ -61,8 +60,9 @@ $('btnAnalyze').addEventListener('click', async () => {
       body: JSON.stringify({
         videoPath: videoInfo.path,
         startTime: parseFloat($('startTime').value) || 0,
-        endTime: parseFloat($('endTime').value) || 30,
+        endTime: parseFloat($('endTime').value) || 20,
         mode: $('mode').value,
+        outputFormat,
         sampleFps: parseFloat($('sampleFps').value),
         smoothMinCutoff: parseFloat($('smoothMinCutoff').value),
         smoothBeta: parseFloat($('smoothBeta').value),
@@ -71,181 +71,159 @@ $('btnAnalyze').addEventListener('click', async () => {
         focusPadding: parseFloat($('focusPadding').value),
       }),
     });
-
+    $('progressFill').style.width = '80%';
     analysisResult = await resp.json();
     if (analysisResult.error) throw new Error(analysisResult.error);
-
-    $('analyzeStatus').textContent = `${analysisResult.framesAnalyzed} frames, ${analysisResult.tracksFound} faces tracked`;
+    $('progressFill').style.width = '100%';
+    setTimeout(() => $('progressBar').style.display = 'none', 500);
+    $('analyzeStatus').textContent = `${analysisResult.framesAnalyzed} frames, ${analysisResult.tracksFound} faces`;
     $('analyzeStatus').className = 'status success';
-    $('btnReSmooth').disabled = false;
-
-    // Update UI
+    $('btnRender').disabled = false;
+    currentFrameIdx = 0;
+    updateIndicators();
     updateFacesList();
     updateJsonOutput();
-    renderTimeline();
-    currentFrameIdx = 0;
     renderFrame();
-
+    renderResultFrame();
   } catch (e) {
     $('analyzeStatus').textContent = e.message;
     $('analyzeStatus').className = 'status error';
+    $('progressBar').style.display = 'none';
   } finally {
     $('btnAnalyze').disabled = false;
   }
 });
 
-// Re-smooth with new params
-$('btnReSmooth').addEventListener('click', async () => {
-  // TODO: Call a re-smooth endpoint with updated One Euro params
-  $('analyzeStatus').textContent = 'Re-suavização será implementada aqui';
-});
-
-// Frame navigation
-$('btnPrev').addEventListener('click', () => {
-  if (!analysisResult?.raw?.detections) return;
-  currentFrameIdx = Math.max(0, currentFrameIdx - 1);
-  renderFrame();
-});
-
-$('btnNext').addEventListener('click', () => {
-  if (!analysisResult?.raw?.detections) return;
-  currentFrameIdx = Math.min(analysisResult.raw.detections.length - 1, currentFrameIdx + 1);
-  renderFrame();
-});
-
-$('btnPlay').addEventListener('click', () => {
-  if (playInterval) {
-    clearInterval(playInterval);
-    playInterval = null;
-    $('btnPlay').textContent = '▶ Play';
-    return;
+// Render preview video
+$('btnRender').addEventListener('click', async () => {
+  if (!videoInfo || !analysisResult) return;
+  $('renderStatus').textContent = 'Renderizando preview...';
+  $('btnRender').disabled = true;
+  try {
+    const resp = await fetch('/api/render-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        videoPath: videoInfo.path,
+        startTime: parseFloat($('startTime').value) || 0,
+        endTime: Math.min((parseFloat($('startTime').value) || 0) + 5, parseFloat($('endTime').value) || 20),
+        cropData: analysisResult.cropData,
+        outputFormat,
+        mode: $('mode').value,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    $('renderedVideo').src = data.videoUrl;
+    $('renderedVideo').style.display = 'block';
+    $('renderStatus').textContent = 'Preview renderizado!';
+    $('renderStatus').className = 'status success';
+  } catch (e) {
+    $('renderStatus').textContent = e.message;
+    $('renderStatus').className = 'status error';
+  } finally {
+    $('btnRender').disabled = false;
   }
-  $('btnPlay').textContent = '⏸ Pause';
+});
+
+// Navigation
+$('btnPrev').addEventListener('click', () => { if (analysisResult?.raw?.detections) { currentFrameIdx = Math.max(0, currentFrameIdx - 1); renderFrame(); renderResultFrame(); }});
+$('btnNext').addEventListener('click', () => { if (analysisResult?.raw?.detections) { currentFrameIdx = Math.min(analysisResult.raw.detections.length - 1, currentFrameIdx + 1); renderFrame(); renderResultFrame(); }});
+$('btnPlay').addEventListener('click', () => {
+  if (playInterval) { clearInterval(playInterval); playInterval = null; $('btnPlay').textContent = '▶'; return; }
+  $('btnPlay').textContent = '⏸';
   playInterval = setInterval(() => {
     if (!analysisResult?.raw?.detections) return;
-    currentFrameIdx++;
-    if (currentFrameIdx >= analysisResult.raw.detections.length) currentFrameIdx = 0;
-    renderFrame();
-  }, 500);
+    currentFrameIdx = (currentFrameIdx + 1) % analysisResult.raw.detections.length;
+    renderFrame(); renderResultFrame();
+  }, 400);
 });
-
-// Copy JSON
 $('btnCopyJson').addEventListener('click', () => {
   if (analysisResult?.cropData) {
     navigator.clipboard.writeText(JSON.stringify(analysisResult.cropData, null, 2));
-    $('btnCopyJson').textContent = 'Copiado!';
-    setTimeout(() => $('btnCopyJson').textContent = 'Copiar JSON', 2000);
+    $('btnCopyJson').textContent = '✓ Copiado!';
+    setTimeout(() => $('btnCopyJson').textContent = 'Copiar JSON', 1500);
   }
 });
 
-// Render frame with face overlay
-async function renderFrame() {
-  if (!analysisResult?.raw?.detections || !videoInfo) return;
+// Update quality indicators
+function updateIndicators() {
+  if (!analysisResult) return;
+  const r = analysisResult;
+  const dets = r.raw?.detections || [];
+  const tracks = r.raw?.tracks || [];
 
-  const det = analysisResult.raw.detections[currentFrameIdx];
-  if (!det) return;
+  // Faces count
+  const maxFaces = Math.max(...dets.map(d => d.faces.length), 0);
+  $('indFaces').textContent = `${tracks.length} tracked (max ${maxFaces}/frame)`;
+  setDot('indFaces', tracks.length > 0 ? '#22c55e' : '#ef4444');
 
-  $('frameInfo').textContent = `Frame ${currentFrameIdx + 1}/${analysisResult.raw.detections.length} | ${det.timestamp.toFixed(2)}s | ${det.faces.length} face(s)`;
+  // Average confidence
+  const allConf = dets.flatMap(d => d.faces.map(f => f.confidence));
+  const avgConf = allConf.length > 0 ? allConf.reduce((a, b) => a + b) / allConf.length : 0;
+  $('indConfidence').innerHTML = `${(avgConf * 100).toFixed(0)}% ${badge(avgConf > 0.8 ? 'good' : avgConf > 0.5 ? 'warn' : 'bad', avgConf > 0.8 ? 'Ótimo' : avgConf > 0.5 ? 'OK' : 'Baixo')}`;
+  setDot('indConfidence', avgConf > 0.8 ? '#22c55e' : avgConf > 0.5 ? '#fbbf24' : '#ef4444');
 
-  // Get frame image
-  try {
-    const resp = await fetch('/api/preview-frame', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoPath: videoInfo.path, timestamp: det.timestamp }),
-    });
-    const data = await resp.json();
-    if (data.error) return;
-
-    const img = new Image();
-    img.onload = () => {
-      const canvas = $('previewCanvas');
-      const area = $('previewArea');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      canvas.style.width = '100%';
-      canvas.style.height = 'auto';
-      area.querySelector('span')?.remove();
-
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-
-      // Draw face bounding boxes
-      const colors = ['#7c3aed', '#22c55e', '#ef4444', '#f59e0b'];
-      det.faces.forEach((face, i) => {
-        const [x1, y1, x2, y2] = face.bbox;
-        const px1 = x1 * img.width, py1 = y1 * img.height;
-        const pw = (x2 - x1) * img.width, ph = (y2 - y1) * img.height;
-
-        ctx.strokeStyle = colors[i % colors.length];
-        ctx.lineWidth = 3;
-        ctx.strokeRect(px1, py1, pw, ph);
-
-        // Confidence label
-        ctx.fillStyle = colors[i % colors.length];
-        ctx.font = 'bold 14px Inter, sans-serif';
-        ctx.fillText(`${(face.confidence * 100).toFixed(0)}%${face.mar ? ` MAR:${face.mar.toFixed(2)}` : ''}`, px1, py1 - 5);
-
-        // Keypoints
-        if (face.landmarks) {
-          face.landmarks.forEach(([lx, ly]) => {
-            ctx.beginPath();
-            ctx.arc(lx * img.width, ly * img.height, 2, 0, Math.PI * 2);
-            ctx.fillStyle = '#fff';
-            ctx.fill();
-          });
-        }
-      });
-
-      // Draw crop overlay
-      if (analysisResult.cropData?.tracks?.length > 0) {
-        const track = analysisResult.cropData.tracks[0];
-        const seg = track.segments?.find(s => det.timestamp >= s.start && det.timestamp < s.end) || track.segments?.[0];
-        if (seg) {
-          const cx = seg.crop_x * img.width;
-          const cy = seg.crop_y * img.height;
-          const cw = (seg.crop_width || 0.4) * img.width;
-          const ch = (seg.crop_height || 0.7) * img.height;
-
-          ctx.strokeStyle = '#f59e0b';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 5]);
-          ctx.strokeRect(cx - cw / 2, cy - ch / 2, cw, ch);
-          ctx.setLineDash([]);
-
-          // Crosshair at crop center
-          ctx.strokeStyle = '#f59e0b';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(cx - 10, cy); ctx.lineTo(cx + 10, cy);
-          ctx.moveTo(cx, cy - 10); ctx.lineTo(cx, cy + 10);
-          ctx.stroke();
-        }
-      }
-    };
-    img.src = data.frame;
-  } catch (e) {
-    console.error('Frame render error:', e);
+  // Stability: how much crop_x varies between consecutive segments
+  const cropTrack = r.cropData?.tracks?.[0];
+  if (cropTrack?.segments?.length > 1) {
+    const diffs = [];
+    for (let i = 1; i < cropTrack.segments.length; i++) {
+      diffs.push(Math.abs(cropTrack.segments[i].crop_x - cropTrack.segments[i-1].crop_x));
+    }
+    const avgDiff = diffs.reduce((a, b) => a + b) / diffs.length;
+    const stability = Math.max(0, 1 - avgDiff * 20); // 0-1 scale
+    $('indStability').innerHTML = `${(stability * 100).toFixed(0)}% ${badge(stability > 0.8 ? 'good' : stability > 0.5 ? 'warn' : 'bad', stability > 0.8 ? 'Estável' : stability > 0.5 ? 'Moderado' : 'Instável')}`;
+    setDot('indStability', stability > 0.8 ? '#22c55e' : stability > 0.5 ? '#fbbf24' : '#ef4444');
   }
+
+  // Speaker
+  const speaker = r.speaker;
+  if (speaker) {
+    $('indSpeaker').innerHTML = speaker.speakerId >= 0 ? `Face #${speaker.speakerId} 🎤` : 'Não detectado';
+    setDot('indSpeaker', speaker.speakerId >= 0 ? '#22c55e' : '#fbbf24');
+  }
+
+  // MAR
+  const allMar = dets.flatMap(d => d.faces.filter(f => f.mar).map(f => f.mar));
+  const avgMar = allMar.length > 0 ? allMar.reduce((a, b) => a + b) / allMar.length : 0;
+  $('indMAR').innerHTML = `${avgMar.toFixed(3)} ${badge(avgMar > 0.2 ? 'good' : 'warn', avgMar > 0.2 ? 'Falando' : 'Quieto')}`;
+  setDot('indMAR', avgMar > 0.2 ? '#22c55e' : '#fbbf24');
+
+  // Coverage
+  const framesWithFaces = dets.filter(d => d.faces.length > 0).length;
+  const coverage = dets.length > 0 ? framesWithFaces / dets.length : 0;
+  $('indCoverage').innerHTML = `${(coverage * 100).toFixed(0)}% (${framesWithFaces}/${dets.length}) ${badge(coverage > 0.9 ? 'good' : coverage > 0.7 ? 'warn' : 'bad', coverage > 0.9 ? 'Ótimo' : coverage > 0.7 ? 'OK' : 'Baixo')}`;
+  setDot('indCoverage', coverage > 0.9 ? '#22c55e' : coverage > 0.7 ? '#fbbf24' : '#ef4444');
+
+  // Recommended layout
+  const layout = r.cropData?.layout || 'single';
+  const layoutLabels = { single: 'Single (1 face)', split_2: 'Split 2 (2 faces)' };
+  $('indLayout').textContent = layoutLabels[layout] || layout;
+  setDot('indLayout', '#7c3aed');
 }
+
+function setDot(valueId, color) {
+  const el = $(valueId);
+  if (el) el.closest('.indicator')?.querySelector('.dot')?.style.setProperty('background', color);
+}
+function badge(type, text) { return `<span class="badge ${type}">${text}</span>`; }
 
 function updateFacesList() {
   if (!analysisResult?.raw?.tracks) return;
-  const el = $('facesList');
   const colors = ['#7c3aed', '#22c55e', '#ef4444', '#f59e0b'];
   const speaker = analysisResult.speaker?.speakerId;
-
-  el.innerHTML = analysisResult.raw.tracks.map((track, i) => `
-    <div class="face-item">
-      <div class="dot" style="background:${colors[i % colors.length]}"></div>
-      <div class="info">
-        <strong>Face #${track.id}</strong>
-        ${track.id === speaker ? ' 🎤 Speaker' : ''}
-        <br>${track.positions.length} detections
-        ${analysisResult.speaker?.scores?.[track.id] ? ` | score: ${analysisResult.speaker.scores[track.id].toFixed(1)}` : ''}
+  const scores = analysisResult.speaker?.scores || {};
+  $('facesList').innerHTML = analysisResult.raw.tracks.map((t, i) => {
+    const avgConf = t.positions.reduce((s, p) => s + (p.confidence || 0), 0) / t.positions.length;
+    return `<div class="face-card">
+      <div class="color-dot" style="background:${colors[i % colors.length]}"></div>
+      <div style="flex:1;font-size:12px">
+        <strong>Face #${t.id}</strong>${t.id === speaker ? ' 🎤' : ''}
+        <br>${t.positions.length} frames | conf ${(avgConf * 100).toFixed(0)}% | score ${(scores[t.id] || 0).toFixed(1)}
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 function updateJsonOutput() {
@@ -253,32 +231,91 @@ function updateJsonOutput() {
   $('jsonOutput').textContent = JSON.stringify(analysisResult.cropData, null, 2);
 }
 
-function renderTimeline() {
-  if (!analysisResult?.raw?.detections) return;
-  const el = $('timeline');
-  const dets = analysisResult.raw.detections;
-  const minT = dets[0]?.timestamp || 0;
-  const maxT = dets[dets.length - 1]?.timestamp || 1;
-  const range = maxT - minT || 1;
-
-  const colors = ['#7c3aed', '#22c55e', '#ef4444', '#f59e0b'];
-
-  let html = '';
-  dets.forEach((det, i) => {
-    const left = ((det.timestamp - minT) / range) * 100;
-    det.faces.forEach((face, fi) => {
-      const h = face.confidence * 40;
-      html += `<div class="bar" style="left:${left}%;width:4px;height:${h}px;bottom:0;top:auto;background:${colors[fi % colors.length]}"></div>`;
+// Render source frame with overlays
+async function renderFrame() {
+  if (!analysisResult?.raw?.detections || !videoInfo) return;
+  const det = analysisResult.raw.detections[currentFrameIdx];
+  if (!det) return;
+  $('frameInfo').textContent = `${currentFrameIdx + 1}/${analysisResult.raw.detections.length} | ${det.timestamp.toFixed(1)}s | ${det.faces.length} face(s)`;
+  try {
+    const resp = await fetch('/api/preview-frame', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ videoPath: videoInfo.path, timestamp: det.timestamp }),
     });
-  });
+    const data = await resp.json();
+    if (data.error) return;
+    const img = new Image();
+    img.onload = () => {
+      const c = $('previewCanvas');
+      c.width = img.width; c.height = img.height;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const colors = ['#7c3aed', '#22c55e', '#ef4444', '#f59e0b'];
+      det.faces.forEach((face, i) => {
+        const [x1, y1, x2, y2] = face.bbox;
+        ctx.strokeStyle = colors[i % colors.length]; ctx.lineWidth = 3;
+        ctx.strokeRect(x1 * img.width, y1 * img.height, (x2 - x1) * img.width, (y2 - y1) * img.height);
+        ctx.fillStyle = colors[i % colors.length]; ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(`${(face.confidence * 100).toFixed(0)}% MAR:${(face.mar || 0).toFixed(2)}`, x1 * img.width, y1 * img.height - 4);
+        if (face.landmarks) face.landmarks.forEach(([lx, ly]) => {
+          ctx.beginPath(); ctx.arc(lx * img.width, ly * img.height, 1.5, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+        });
+      });
+      // Crop overlay
+      const track = analysisResult.cropData?.tracks?.[0];
+      const seg = track?.segments?.find(s => det.timestamp >= s.start && det.timestamp < s.end);
+      if (seg) {
+        const cx = seg.crop_x * img.width, cy = seg.crop_y * img.height;
+        ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+        const cw = (seg.crop_width || 0.3) * img.width, ch = (seg.crop_height || 0.5) * img.height;
+        ctx.strokeRect(cx - cw / 2, cy - ch / 2, cw, ch);
+        ctx.setLineDash([]);
+      }
+    };
+    img.src = data.frame;
+  } catch {}
+}
 
-  el.innerHTML = html;
+// Render simulated final output
+function renderResultFrame() {
+  if (!analysisResult?.raw?.detections || !videoInfo) return;
+  const det = analysisResult.raw.detections[currentFrameIdx];
+  if (!det) return;
+  const rc = $('resultCanvas');
+  const ctx = rc.getContext('2d');
+  const mode = $('mode').value;
+  const layout = analysisResult.cropData?.layout;
 
-  // Click to seek
-  el.addEventListener('click', (e) => {
-    const rect = el.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    currentFrameIdx = Math.round(pct * (dets.length - 1));
-    renderFrame();
-  });
+  // Get source frame from preview canvas
+  const sc = $('previewCanvas');
+  if (sc.width === 0) return;
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, rc.width, rc.height);
+
+  if (layout === 'split_2' && analysisResult.cropData?.tracks?.length >= 2) {
+    // Split view: top half = track 0, bottom half = track 1
+    const halfH = rc.height / 2;
+    [0, 1].forEach(ti => {
+      const track = analysisResult.cropData.tracks[ti];
+      const seg = track?.segments?.find(s => det.timestamp >= s.start && det.timestamp < s.end) || track?.segments?.[0];
+      if (!seg) return;
+      const sx = seg.crop_x * sc.width, sy = seg.crop_y * sc.height;
+      const sw = Math.max((seg.crop_width || 0.3) * sc.width, 50);
+      const sh = Math.max((seg.crop_height || 0.3) * sc.height, 50);
+      ctx.drawImage(sc, sx - sw, sy - sh, sw * 2, sh * 2, 0, ti * halfH, rc.width, halfH);
+    });
+    // Divider
+    ctx.fillStyle = '#000'; ctx.fillRect(0, halfH - 1, rc.width, 2);
+  } else {
+    // Single crop
+    const track = analysisResult.cropData?.tracks?.[0];
+    const seg = track?.segments?.find(s => det.timestamp >= s.start && det.timestamp < s.end) || track?.segments?.[0];
+    if (seg) {
+      const sx = seg.crop_x * sc.width, sy = seg.crop_y * sc.height;
+      const sw = Math.max((seg.crop_width || 0.3) * sc.width, 50);
+      const sh = Math.max((seg.crop_height || 0.5) * sc.height, 50);
+      ctx.drawImage(sc, sx - sw, sy - sh, sw * 2, sh * 2, 0, 0, rc.width, rc.height);
+    }
+  }
 }
