@@ -19,24 +19,29 @@ const INPUT_SIZE = 640;
 async function getSession() {
   if (session) return session;
 
-  const opts = new ort.InferenceSession.SessionOptions();
-
   // Try CUDA first, fall back to CPU
+  const providers = [];
   try {
-    opts.appendExecutionProvider('cuda', { device_id: 0 });
-    console.log('[scrfd] Using CUDA GPU');
-  } catch {
-    console.log('[scrfd] CUDA not available, using CPU');
-  }
+    providers.push({ name: 'cuda', deviceId: 0 });
+    console.log('[scrfd] Requesting CUDA GPU');
+  } catch {}
+  providers.push('cpu');
 
-  session = await ort.InferenceSession.create(MODEL_PATH, opts);
-  console.log(`[scrfd] Model loaded. Inputs: ${session.inputNames}, Outputs: ${session.outputNames}`);
+  session = await ort.InferenceSession.create(MODEL_PATH, {
+    executionProviders: providers,
+  });
+  const usedProvider = session.handler?.['_ep'] || 'unknown';
+  console.log(`[scrfd] Model loaded (provider: ${usedProvider}). Inputs: ${session.inputNames}, Outputs: ${session.outputNames}`);
 
   // Warmup
   const dummy = new Float32Array(1 * 3 * INPUT_SIZE * INPUT_SIZE);
   const tensor = new ort.Tensor('float32', dummy, [1, 3, INPUT_SIZE, INPUT_SIZE]);
-  await session.run({ [session.inputNames[0]]: tensor });
-  console.log('[scrfd] Warmup done');
+  try {
+    await session.run({ [session.inputNames[0]]: tensor });
+    console.log('[scrfd] Warmup done');
+  } catch (e) {
+    console.log('[scrfd] Warmup failed (model may need different input):', e.message?.slice(0, 100));
+  }
 
   return session;
 }

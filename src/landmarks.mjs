@@ -18,11 +18,9 @@ const INPUT_SIZE = 192;
 
 async function getSession() {
   if (session) return session;
-  const opts = new ort.InferenceSession.SessionOptions();
-  try {
-    opts.appendExecutionProvider('cuda', { device_id: 0 });
-  } catch {}
-  session = await ort.InferenceSession.create(MODEL_PATH, opts);
+  session = await ort.InferenceSession.create(MODEL_PATH, {
+    executionProviders: [{ name: 'cuda', deviceId: 0 }, 'cpu'],
+  });
   console.log(`[landmarks] Model loaded. Inputs: ${session.inputNames}`);
   return session;
 }
