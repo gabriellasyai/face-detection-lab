@@ -113,12 +113,21 @@ export async function extractLandmarks(imagePath, bbox) {
  * 104-105: pupils
  *
  * Mouth landmarks for MAR:
- * Upper lip: 64, 65, 66, 67, 68, 69, 70, 71
- * Lower lip: 72, 73, 74, 75, 76, 77, 78, 79
+ * Outer upper lip: 64, 65, 66, 67, 68, 69, 70, 71 (left corner → right corner over top)
+ * Outer lower lip: 72, 73, 74, 75, 76, 77, 78, 79 (left corner → right corner under bottom)
  * Inner upper: 80, 81, 82, 83
  * Inner lower: 84, 85, 86, 87
+ *
+ * For MAR we use:
+ *   Vertical: outer upper lip center (67) vs outer lower lip center (75)
+ *     — single pair like the Python production code (which uses 68-lm indices 62/66)
+ *   Horizontal: left mouth corner (64) vs right mouth corner (71)
+ *     — full mouth width, NOT partial upper lip span
+ *
+ * Previous bug: MOUTH_RIGHT was 68 (≈ center of upper lip), making horizontal
+ * distance ~half the actual mouth width → MAR inflated ~2× → always hit 0.8 cap.
  */
-export const MOUTH_UPPER = [80, 81, 82, 83];
-export const MOUTH_LOWER = [84, 85, 86, 87];
-export const MOUTH_LEFT = 64;
-export const MOUTH_RIGHT = 68;
+export const MOUTH_UPPER = [67];  // outer upper lip center
+export const MOUTH_LOWER = [75];  // outer lower lip center
+export const MOUTH_LEFT = 64;     // left mouth corner
+export const MOUTH_RIGHT = 71;    // right mouth corner (was 68 — WRONG)

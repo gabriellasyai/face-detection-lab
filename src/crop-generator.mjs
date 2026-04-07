@@ -28,25 +28,53 @@ export function generateCropData(tracks, speakerInfo, opts = {}) {
   const speakerTrack = tracks.find(t => t.id === speakerInfo.speakerId) || tracks[0];
 
   // Target output aspect ratio: 9:16 portrait
-  // In normalized [0,1] coords, width and height represent different pixel ranges
-  // (e.g., for 16:9 source: width=1 means 1920px, height=1 means 1080px).
-  // To get a 9:16 crop from 16:9 source, we compute in normalized space:
-  //   cropH_norm = cropW_norm * (srcW/srcH) / (outW/outH)
-  // For 16:9 src → 9:16 out: cropH = cropW * (16/9) / (9/16) = cropW * 3.16
-  // This means height easily exceeds 1.0. So we size based on what fits.
-  //
-  // Strategy: set cropH to cover most of the vertical frame (e.g., 0.85),
-  // then derive cropW from the aspect ratio.
   const sourceAspect = 16 / 9;  // source video W/H
   const targetAspect = 9 / 16;  // desired output W/H
 
-  // Height-first sizing: use most of the frame vertically
-  const baseH = mode === 'focus' ? 0.80 : 0.95;
+  // Adaptive baseH depending on scene composition:
+  // - 1 dominant track → tighter crop (0.85) for more zoom on speaker
+  // - 2+ tracks → wider crop to include context / multiple people
+  // - Also factor in average face size: larger faces (closer) → can crop tighter
+  let baseH;
+  if (mode === 'focus') {
+    baseH = 0.80;
+  } else {
+    // Count tracks with significant presence (>25% of frames)
+    const maxFrames = Math.max(...tracks.map(t => t.positions.length));
+    const significantTracks = tracks.filter(t => t.positions.length >= maxFrames * 0.25);
+
+    // Average face size of the speaker (larger = closer to camera)
+    const speakerBboxes = speakerTrack.positions.filter(p => p.bbox).map(p => {
+      const [x1, y1, x2, y2] = p.bbox;
+      return (x2 - x1) * (y2 - y1);
+    });
+    const avgFaceArea = speakerBboxes.length > 0
+      ? speakerBboxes.reduce((a, b) => a + b) / speakerBboxes.length
+      : 0;
+
+    if (significantTracks.length <= 1) {
+      // Solo speaker — tighter crop, especially if face is large (close to camera)
+      // avgFaceArea ~0.01 = far, ~0.05 = medium, ~0.10+ = close
+      baseH = avgFaceArea > 0.04 ? 0.80 : 0.85;
+    } else if (significantTracks.length === 2) {
+      // Two people — check if they're close together or spread apart
+      const allCxValues = significantTracks.flatMap(t =>
+        t.positions.filter(p => p.bbox).map(p => (p.bbox[0] + p.bbox[2]) / 2)
+      );
+      const minCx = Math.min(...allCxValues);
+      const maxCx = Math.max(...allCxValues);
+      const spread = maxCx - minCx;
+      // spread < 0.3 = close together, > 0.5 = far apart
+      baseH = spread > 0.4 ? 0.95 : 0.90;
+    } else {
+      // 3+ people — use full frame height to get widest crop
+      baseH = 0.95;
+    }
+    console.log(`  [crop] significantTracks=${significantTracks.length}, avgFaceArea=${avgFaceArea.toFixed(4)}, baseH=${baseH.toFixed(2)}`);
+  }
+
   const cropH = baseH / zoomLevel;
   // Derive width from height to maintain 9:16 output aspect
-  // cropW_pixels / cropH_pixels = 9/16
-  // (cropW * srcW) / (cropH * srcH) = 9/16
-  // cropW = cropH * (srcH / srcW) * (9/16)
   const cropW = cropH * (1 / sourceAspect) * targetAspect;
   // For baseH=0.88: cropW = 0.88 * 0.5625 * 0.5625 = 0.278
   // That gives about 0.28 width — good for framing one person
@@ -91,7 +119,24 @@ export function generateCropData(tracks, speakerInfo, opts = {}) {
 
 function generateSplit2(tracks, speakerInfo) {
   const speaker = tracks.find(t => t.id === speakerInfo.speakerId) || tracks[0];
-  const listener = tracks.find(t => t.id !== speaker.id) || tracks[1];
+  // Pick the most prominent non-speaker as listener (by frame count, then face area)
+  const nonSpeakers = tracks.filter(t => t.id !== speaker.id);
+  const listener = nonSpeakers.length > 0
+    ? nonSpeakers.sort((a, b) => {
+        // Primary: presence (frame count)
+        if (b.positions.length !== a.positions.length) return b.positions.length - a.positions.length;
+        // Secondary: face area (closer = more prominent)
+        const areaOf = (t) => {
+          const bboxes = t.positions.filter(p => p.bbox).map(p => {
+            const [x1, y1, x2, y2] = p.bbox;
+            return (x2 - x1) * (y2 - y1);
+          });
+          return bboxes.length > 0 ? bboxes.reduce((a, b) => a + b) / bboxes.length : 0;
+        };
+        return areaOf(b) - areaOf(a);
+      })[0]
+    : tracks[1];
+  console.log(`  [split2] Speaker: Track ${speaker.id} (player_index=0, top), Listener: Track ${listener.id} (player_index=1, bottom)`);
 
   const makeSegments = (track) => {
     const sourceAspect = 16 / 9;

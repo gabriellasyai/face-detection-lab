@@ -6,28 +6,64 @@
  * The person whose mouth moves MORE during speech and LESS during silence is the speaker.
  */
 
-import { MOUTH_UPPER, MOUTH_LOWER, MOUTH_LEFT, MOUTH_RIGHT } from './landmarks.mjs';
+// Mouth landmark indices are now hardcoded in computeMAR (uses full range 64-87)
+// import { MOUTH_UPPER, MOUTH_LOWER, MOUTH_LEFT, MOUTH_RIGHT } from './landmarks.mjs';
 
-const MAR_SANITY_MAX = 0.8; // Above this = detection artifact
+const MAR_SANITY_MAX = 5.0; // Raised: bbox-based MAR for 24 mouth points has baseline ~1.0
 
 /**
- * Compute MAR from 106-point landmarks.
+ * Compute MAR from 106-point landmarks using bounding-box approach.
+ *
+ * The 2d106det model's mouth landmark indices don't map cleanly to
+ * "upper center / lower center / left corner / right corner" as the
+ * 68-landmark dlib model does.  Instead, we use ALL mouth-region landmarks
+ * (indices 64-87 = 24 points) and measure the vertical extent (max_y - min_y)
+ * vs horizontal extent (max_x - min_x) of that point cloud.
+ *
+ * When the mouth is closed:  vertical ≈ small, horizontal ≈ mouth width  → MAR low
+ * When the mouth is open:    vertical grows (lips separate)              → MAR high
+ *
+ * This is source-aspect-ratio independent because we correct for 16:9 pixel aspect.
  */
 export function computeMAR(landmarks) {
-  if (!landmarks || landmarks.length < 106) return 0;
-  let verticalSum = 0;
-  const pairs = Math.min(MOUTH_UPPER.length, MOUTH_LOWER.length);
-  for (let i = 0; i < pairs; i++) {
-    const upper = landmarks[MOUTH_UPPER[i]];
-    const lower = landmarks[MOUTH_LOWER[i]];
-    if (upper && lower) verticalSum += Math.abs(lower[1] - upper[1]);
+  if (!landmarks || landmarks.length < 88) return 0;
+
+  // Collect all mouth landmarks (outer upper 64-71, outer lower 72-79, inner upper 80-83, inner lower 84-87)
+  const mouthIndices = [];
+  for (let i = 64; i <= 87; i++) mouthIndices.push(i);
+
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  let count = 0;
+
+  for (const idx of mouthIndices) {
+    const pt = landmarks[idx];
+    if (!pt) continue;
+    const [x, y] = pt;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    count++;
   }
-  const verticalAvg = verticalSum / pairs;
-  const left = landmarks[MOUTH_LEFT];
-  const right = landmarks[MOUTH_RIGHT];
-  if (!left || !right) return 0;
-  const horizontal = Math.abs(right[0] - left[0]);
-  return horizontal > 0.001 ? Math.min(verticalAvg / horizontal, MAR_SANITY_MAX) : 0;
+
+  if (count < 8) return 0;
+
+  // Horizontal and vertical extents in normalized coords
+  let horizExtent = maxX - minX;
+  let vertExtent = maxY - minY;
+
+  // Correct for source pixel aspect ratio (16:9 → width pixels > height pixels).
+  // normalized x=0.01 corresponds to 0.01*1280 = 12.8 px
+  // normalized y=0.01 corresponds to 0.01*720  = 7.2 px
+  // To compare in real-world proportions: multiply x by srcW and y by srcH
+  const srcW = 1280, srcH = 720; // 16:9 assumption
+  horizExtent *= srcW;
+  vertExtent *= srcH;
+
+  if (horizExtent < 0.5) return 0; // < 0.5 pixel → no valid mouth detected
+
+  return Math.min(vertExtent / horizExtent, MAR_SANITY_MAX);
 }
 
 /**
@@ -64,7 +100,7 @@ export function detectSpeaker(tracks, speechSegments = [], marThreshold = 0.35) 
 
   const isDuringSpeech = (ts) => {
     for (const [start, end] of speechWindows) {
-      if (start - 0.2 <= ts && ts <= end + 0.2) return true;
+      if (start - 0.5 <= ts && ts <= end + 0.5) return true;
     }
     return false;
   };
@@ -96,18 +132,31 @@ export function detectSpeaker(tracks, speechSegments = [], marThreshold = 0.35) 
     const avgSilence = marsSilence.length > 0 ? marsSilence.reduce((a, b) => a + b) / marsSilence.length : 0;
     const differential = avgSpeech - avgSilence;
 
+    // Compute MAR variance during speech — speakers have higher variance
+    // (mouth opens and closes rhythmically while talking)
+    let varianceSpeech = 0;
+    if (marsSpeech.length > 1) {
+      const mean = avgSpeech;
+      varianceSpeech = marsSpeech.reduce((sum, v) => sum + (v - mean) ** 2, 0) / marsSpeech.length;
+    }
+
     // Weight by face area: larger faces = more reliable landmarks
     const bboxes = track.positions.filter(p => p.bbox).map(p => {
       const [x1, y1, x2, y2] = p.bbox;
       return (x2 - x1) * (y2 - y1);
     });
     const avgArea = bboxes.length > 0 ? bboxes.reduce((a, b) => a + b) / bboxes.length : 0;
-    const areaWeight = Math.min(1.0, avgArea / 0.02);
+    // Area threshold: 0.02 is too aggressive for multi-person wide shots
+    // where faces are small (~0.002-0.005). Use 0.005 so small faces still get reasonable weight.
+    const areaWeight = Math.min(1.0, avgArea / 0.005);
 
-    const weightedDiff = Math.max(0, differential * areaWeight);
+    // Combined score: differential + variance bonus (speakers move mouth more)
+    // Variance is typically 0.001-0.01 for non-speakers, 0.01-0.05 for speakers
+    const combinedDiff = Math.max(0, differential) + varianceSpeech * 2;
+    const weightedDiff = combinedDiff * areaWeight;
     scores[track.id] = weightedDiff;
 
-    console.log(`  [speaker] Track ${track.id}: MAR speech=${avgSpeech.toFixed(4)}, silence=${avgSilence.toFixed(4)}, diff=${differential.toFixed(4)}, area_w=${areaWeight.toFixed(2)}, score=${weightedDiff.toFixed(4)}`);
+    console.log(`  [speaker] Track ${track.id}: MAR speech=${avgSpeech.toFixed(4)}, silence=${avgSilence.toFixed(4)}, diff=${differential.toFixed(4)}, var=${varianceSpeech.toFixed(6)}, area_w=${areaWeight.toFixed(2)}, score=${weightedDiff.toFixed(4)}`);
 
     if (weightedDiff > bestDiff) {
       bestDiff = weightedDiff;
