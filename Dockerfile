@@ -19,15 +19,18 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 
-# Download ONNX models from InsightFace official release
+# Download ONNX models from InsightFace official release (~288MB zip)
 RUN mkdir -p models && \
-    wget -q "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" -O /tmp/buffalo_l.zip && \
-    unzip -q /tmp/buffalo_l.zip -d /tmp/buffalo_l && \
+    wget --retry-connrefused --waitretry=5 --timeout=120 -t 3 \
+      "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" \
+      -O /tmp/buffalo_l.zip && \
+    ls -lh /tmp/buffalo_l.zip && \
+    unzip /tmp/buffalo_l.zip -d /tmp/buffalo_l && \
     cp /tmp/buffalo_l/buffalo_l/det_10g.onnx models/ && \
     cp /tmp/buffalo_l/buffalo_l/2d106det.onnx models/ && \
     cp /tmp/buffalo_l/buffalo_l/w600k_r50.onnx models/ && \
     rm -rf /tmp/buffalo_l /tmp/buffalo_l.zip && \
-    ls -lh models/
+    echo "Models:" && ls -lh models/
 
 # Copy app
 COPY src/ ./src/
