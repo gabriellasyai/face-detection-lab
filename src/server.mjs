@@ -13,6 +13,7 @@ import { smoothCropTrack } from './smoother.mjs';
 import { generateCropData } from './crop-generator.mjs';
 import { extractFrames, extractAudioRMS } from './frame-extractor.mjs';
 import { transcribeSegment } from './whisper.mjs';
+import { detectSilence, remapSegments, remapCropData } from './silence-cutter.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3000');
@@ -73,6 +74,10 @@ app.post('/api/analyze', async (req, res) => {
     marThreshold = 0.35,
     zoomLevel = 1.0,       // 1.0 = normal, 1.5 = tight face crop
     focusPadding = 0.3,    // padding around face (0-1)
+    // Silence cutting
+    silenceThreshold = 0.8,  // seconds — gaps > this are cut
+    silencePadding = 0.1,    // seconds — keep at each edge of cut
+    enableSilenceCut = true, // enable/disable silence removal
   } = req.body;
 
   if (!videoPath || !existsSync(videoPath)) {
@@ -148,6 +153,24 @@ app.post('/api/analyze', async (req, res) => {
     // 8. Smooth the crop tracks
     const smoothed = smoothCropTrack(cropData, { minCutoff: smoothMinCutoff, beta: smoothBeta });
 
+    // 9. Silence detection & cutting
+    let silenceInfo = null;
+    let finalCropData = smoothed;
+    let finalTranscription = speechSegments;
+
+    if (enableSilenceCut && speechSegments.length > 0) {
+      console.log(`[analyze] Detecting silence (threshold=${silenceThreshold}s)...`);
+      silenceInfo = detectSilence(speechSegments, silenceThreshold, silencePadding);
+      console.log(`[analyze] Found ${silenceInfo.silenceGaps.length} silence gaps (${silenceInfo.totalSilence.toFixed(1)}s total, ${(silenceInfo.silenceRatio * 100).toFixed(0)}% of clip)`);
+
+      if (silenceInfo.silenceGaps.length > 0) {
+        // Remap all timestamps to new timeline
+        finalCropData = remapCropData(smoothed, silenceInfo.timeMapping);
+        finalTranscription = remapSegments(speechSegments, silenceInfo.timeMapping);
+        console.log(`[analyze] Remapped timestamps: ${silenceInfo.newDuration.toFixed(1)}s new duration (was ${((endTime || 20) - startTime).toFixed(1)}s)`);
+      }
+    }
+
     // Cleanup frames
     try { execSync(`rm -rf "${framesDir}"`); } catch {}
 
@@ -157,7 +180,18 @@ app.post('/api/analyze', async (req, res) => {
       framesAnalyzed: frames.length,
       tracksFound: tracks.length,
       speaker: speakerInfo,
-      cropData: smoothed,
+      cropData: finalCropData,
+      // Silence analysis
+      silence: silenceInfo ? {
+        gaps: silenceInfo.silenceGaps.length,
+        totalSilence: silenceInfo.totalSilence,
+        totalSpeech: silenceInfo.totalSpeech,
+        silenceRatio: silenceInfo.silenceRatio,
+        newDuration: silenceInfo.newDuration,
+        cutMap: silenceInfo.cutMap,
+        silenceGaps: silenceInfo.silenceGaps,
+      } : null,
+      transcription: finalTranscription,
       // Raw data for debugging/tuning
       raw: {
         detections: detections.map(d => ({

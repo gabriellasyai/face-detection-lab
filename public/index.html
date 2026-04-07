@@ -174,6 +174,21 @@
           </div>
 
           <div class="divider"></div>
+          <h2>Corte de Silêncio</h2>
+          <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            <input type="checkbox" id="enableSilenceCut" checked style="width:auto;margin:0">
+            <span>Remover silêncio</span>
+          </label>
+          <div class="range-row">
+            <label>Threshold <span id="silenceThreshVal">0.80</span>s</label>
+            <input type="range" id="silenceThreshold" min="0.3" max="2.0" step="0.1" value="0.8">
+          </div>
+          <div class="range-row">
+            <label>Padding <span id="silencePaddingVal">0.10</span>s</label>
+            <input type="range" id="silencePadding" min="0.0" max="0.5" step="0.05" value="0.1">
+          </div>
+
+          <div class="divider"></div>
           <button id="btnAnalyze" disabled>🔍 Analisar Faces</button>
           <button id="btnRender" class="render-btn" disabled>🎬 Render Preview (5s)</button>
           <div class="progress-bar" id="progressBar" style="display:none"><div class="fill" id="progressFill"></div></div>
@@ -248,6 +263,16 @@
               <div class="dot" style="background:#3f3f46"></div>
               <span class="label">Layout recomendado</span>
               <span class="value" id="indLayout">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Silêncio removido</span>
+              <span class="value" id="indSilence">—</span>
+            </div>
+            <div class="indicator">
+              <div class="dot" style="background:#3f3f46"></div>
+              <span class="label">Duração final</span>
+              <span class="value" id="indNewDuration">—</span>
             </div>
           </div>
         </div>

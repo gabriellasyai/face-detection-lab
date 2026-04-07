@@ -7,9 +7,9 @@ let outputFormat = '9:16';
 const $ = id => document.getElementById(id);
 
 // Range slider values
-['sampleFps','zoomLevel','focusPadding','smoothMinCutoff','smoothBeta','marThreshold'].forEach(id => {
+['sampleFps','zoomLevel','focusPadding','smoothMinCutoff','smoothBeta','marThreshold','silenceThreshold','silencePadding'].forEach(id => {
   const el = $(id);
-  const map = {sampleFps:'sampleFpsVal',zoomLevel:'zoomVal',focusPadding:'paddingVal',smoothMinCutoff:'minCutoffVal',smoothBeta:'betaVal',marThreshold:'marVal'};
+  const map = {sampleFps:'sampleFpsVal',zoomLevel:'zoomVal',focusPadding:'paddingVal',smoothMinCutoff:'minCutoffVal',smoothBeta:'betaVal',marThreshold:'marVal',silenceThreshold:'silenceThreshVal',silencePadding:'silencePaddingVal'};
   el.addEventListener('input', () => $(map[id]).textContent = parseFloat(el.value).toFixed(el.step.length > 3 ? 3 : 2));
 });
 
@@ -69,6 +69,9 @@ $('btnAnalyze').addEventListener('click', async () => {
         marThreshold: parseFloat($('marThreshold').value),
         zoomLevel: parseFloat($('zoomLevel').value),
         focusPadding: parseFloat($('focusPadding').value),
+        enableSilenceCut: $('enableSilenceCut').checked,
+        silenceThreshold: parseFloat($('silenceThreshold').value),
+        silencePadding: parseFloat($('silencePadding').value),
       }),
     });
     $('progressFill').style.width = '80%';
@@ -201,6 +204,19 @@ function updateIndicators() {
   const layoutLabels = { single: 'Single (1 face)', split_2: 'Split 2 (2 faces)' };
   $('indLayout').textContent = layoutLabels[layout] || layout;
   setDot('indLayout', '#7c3aed');
+
+  // Silence
+  if (r.silence) {
+    const s = r.silence;
+    $('indSilence').innerHTML = `${s.gaps} cortes (${s.totalSilence.toFixed(1)}s) ${badge(s.silenceRatio < 0.1 ? 'good' : s.silenceRatio < 0.3 ? 'warn' : 'bad', `${(s.silenceRatio * 100).toFixed(0)}%`)}`;
+    setDot('indSilence', s.gaps > 0 ? '#22c55e' : '#71717a');
+    $('indNewDuration').textContent = `${s.newDuration.toFixed(1)}s (era ${(s.totalSpeech + s.totalSilence).toFixed(1)}s)`;
+    setDot('indNewDuration', '#22c55e');
+  } else {
+    $('indSilence').textContent = 'Desativado';
+    setDot('indSilence', '#71717a');
+    $('indNewDuration').textContent = '—';
+  }
 }
 
 function setDot(valueId, color) {
