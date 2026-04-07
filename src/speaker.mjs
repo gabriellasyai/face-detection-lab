@@ -1,124 +1,132 @@
 /**
- * Speaker Detection via MAR (Mouth Aspect Ratio) + Audio Correlation
+ * Speaker Detection via MAR + Whisper Audio Correlation
+ * Same approach as InstaCut production pipeline (face_detection.py identify_speaker)
+ *
+ * Logic: correlate mouth movement (MAR) with speech timestamps from Whisper.
+ * The person whose mouth moves MORE during speech and LESS during silence is the speaker.
  */
 
 import { MOUTH_UPPER, MOUTH_LOWER, MOUTH_LEFT, MOUTH_RIGHT } from './landmarks.mjs';
 
+const MAR_SANITY_MAX = 0.8; // Above this = detection artifact
+
 /**
  * Compute MAR from 106-point landmarks.
- * @param {number[][]} landmarks - 106 [x, y] points
- * @returns {number} MAR value (0 = closed, 0.3-0.7 = open/speaking)
  */
 export function computeMAR(landmarks) {
   if (!landmarks || landmarks.length < 106) return 0;
-
-  // Vertical: average distance between upper and lower inner lip points
   let verticalSum = 0;
   const pairs = Math.min(MOUTH_UPPER.length, MOUTH_LOWER.length);
   for (let i = 0; i < pairs; i++) {
     const upper = landmarks[MOUTH_UPPER[i]];
     const lower = landmarks[MOUTH_LOWER[i]];
-    if (upper && lower) {
-      verticalSum += Math.abs(lower[1] - upper[1]);
-    }
+    if (upper && lower) verticalSum += Math.abs(lower[1] - upper[1]);
   }
   const verticalAvg = verticalSum / pairs;
-
-  // Horizontal: mouth width
   const left = landmarks[MOUTH_LEFT];
   const right = landmarks[MOUTH_RIGHT];
   if (!left || !right) return 0;
   const horizontal = Math.abs(right[0] - left[0]);
-
-  return horizontal > 0.001 ? verticalAvg / horizontal : 0;
+  return horizontal > 0.001 ? Math.min(verticalAvg / horizontal, MAR_SANITY_MAX) : 0;
 }
 
 /**
- * Detect which tracked person is the active speaker.
- * @param {Array<{id, positions}>} tracks - From tracker
- * @param {Array<{timestamp, rms}>} audioRMS - Audio energy over time
- * @param {number} marThreshold - MAR threshold for "mouth open" (default 0.35)
- * @returns {{speakerId: number, speakerWindows: Array<{start, end, speakerId}>}}
+ * Detect speaker by correlating MAR with Whisper speech windows.
+ * Same algorithm as InstaCut face_detection.py identify_speaker().
+ *
+ * @param {Array<{id, positions}>} tracks
+ * @param {Array<{start, end, text}>} speechSegments - From Whisper transcription
+ * @param {number} marThreshold - Not used directly, kept for API compat
+ * @returns {{speakerId, scores, speakerWindows, transcription}}
  */
-export function detectSpeaker(tracks, audioRMS, marThreshold = 0.35) {
-  if (tracks.length === 0) return { speakerId: -1, speakerWindows: [] };
+export function detectSpeaker(tracks, speechSegments = [], marThreshold = 0.35) {
+  if (tracks.length === 0) return { speakerId: -1, scores: {}, speakerWindows: [], transcription: [] };
+
+  // If only 1 track, they're the speaker
   if (tracks.length === 1) {
-    // Only one person — they're the speaker
     const t = tracks[0];
     return {
       speakerId: t.id,
+      scores: { [t.id]: 1 },
       speakerWindows: [{
         start: t.positions[0]?.timestamp || 0,
         end: t.positions[t.positions.length - 1]?.timestamp || 0,
         speakerId: t.id,
       }],
+      transcription: speechSegments,
     };
   }
 
-  // Compute MAR variance per track in sliding windows
-  const windowSize = 1.0; // 1 second windows
-  const speakerScores = new Map(); // trackId → total speaking score
+  // Build speech windows from Whisper segments
+  const speechWindows = speechSegments
+    .filter(seg => seg.start != null && seg.end != null)
+    .map(seg => [seg.start, seg.end]);
+
+  const isDuringSpeech = (ts) => {
+    for (const [start, end] of speechWindows) {
+      if (start - 0.2 <= ts && ts <= end + 0.2) return true;
+    }
+    return false;
+  };
+
+  // For each person: compute MAR during speech vs silence (same as InstaCut)
+  let bestPerson = null;
+  let bestDiff = -1;
+  const scores = {};
 
   for (const track of tracks) {
-    let score = 0;
-    const mars = track.positions
-      .filter(p => p.landmarks)
-      .map(p => ({ timestamp: p.timestamp, mar: computeMAR(p.landmarks) }));
+    const marsSpeech = [];
+    const marsSilence = [];
 
-    // Sliding window MAR variance
-    for (let i = 0; i < mars.length; i++) {
-      const windowStart = mars[i].timestamp;
-      const windowMars = mars.filter(m => m.timestamp >= windowStart && m.timestamp < windowStart + windowSize);
-      if (windowMars.length < 2) continue;
+    for (const pos of track.positions) {
+      const mar = pos.landmarks ? computeMAR(pos.landmarks) : 0;
+      const clampedMar = Math.min(mar, MAR_SANITY_MAX);
 
-      const mean = windowMars.reduce((s, m) => s + m.mar, 0) / windowMars.length;
-      const variance = windowMars.reduce((s, m) => s + (m.mar - mean) ** 2, 0) / windowMars.length;
-
-      // High variance = mouth moving = speaking
-      if (variance > 0.005) score += 1;
-      // Also check if mouth is open (MAR above threshold)
-      if (mean > marThreshold) score += 0.5;
-    }
-
-    // Audio correlation: correlate MAR peaks with audio RMS peaks
-    if (audioRMS.length > 0) {
-      for (const mar of mars) {
-        const closestRms = audioRMS.reduce((best, r) =>
-          Math.abs(r.timestamp - mar.timestamp) < Math.abs(best.timestamp - mar.timestamp) ? r : best
-        );
-        // If mouth open AND audio energy high → strong speaker signal
-        if (mar.mar > marThreshold && closestRms.rms > 0.1) {
-          score += 1;
-        }
+      if (speechWindows.length === 0) {
+        // No transcription: fall back to MAR variance
+        marsSpeech.push(clampedMar);
+      } else if (isDuringSpeech(pos.timestamp)) {
+        marsSpeech.push(clampedMar);
+      } else {
+        marsSilence.push(clampedMar);
       }
     }
 
-    speakerScores.set(track.id, score);
-  }
+    const avgSpeech = marsSpeech.length > 0 ? marsSpeech.reduce((a, b) => a + b) / marsSpeech.length : 0;
+    const avgSilence = marsSilence.length > 0 ? marsSilence.reduce((a, b) => a + b) / marsSilence.length : 0;
+    const differential = avgSpeech - avgSilence;
 
-  // Primary speaker = highest score
-  let speakerId = tracks[0].id;
-  let maxScore = 0;
-  for (const [id, score] of speakerScores) {
-    if (score > maxScore) {
-      maxScore = score;
-      speakerId = id;
+    // Weight by face area: larger faces = more reliable landmarks
+    const bboxes = track.positions.filter(p => p.bbox).map(p => {
+      const [x1, y1, x2, y2] = p.bbox;
+      return (x2 - x1) * (y2 - y1);
+    });
+    const avgArea = bboxes.length > 0 ? bboxes.reduce((a, b) => a + b) / bboxes.length : 0;
+    const areaWeight = Math.min(1.0, avgArea / 0.02);
+
+    const weightedDiff = Math.max(0, differential * areaWeight);
+    scores[track.id] = weightedDiff;
+
+    console.log(`  [speaker] Track ${track.id}: MAR speech=${avgSpeech.toFixed(4)}, silence=${avgSilence.toFixed(4)}, diff=${differential.toFixed(4)}, area_w=${areaWeight.toFixed(2)}, score=${weightedDiff.toFixed(4)}`);
+
+    if (weightedDiff > bestDiff) {
+      bestDiff = weightedDiff;
+      bestPerson = track;
     }
   }
 
-  // Generate speaker windows (who is speaking when)
-  const speakerWindows = [];
-  let currentSpeaker = speakerId;
-  let windowStart = tracks[0].positions[0]?.timestamp || 0;
+  const speakerId = bestPerson?.id ?? tracks[0].id;
+  console.log(`  [speaker] Active speaker: Track ${speakerId} (score=${bestDiff.toFixed(4)})${speechWindows.length > 0 ? ' (Whisper-correlated)' : ' (MAR-only fallback)'}`);
 
-  // For now, simple: primary speaker for the whole duration
-  // TODO: per-window speaker switching based on MAR peaks
+  // Generate speaker windows
   const lastTs = Math.max(...tracks.flatMap(t => t.positions.map(p => p.timestamp)));
-  speakerWindows.push({ start: windowStart, end: lastTs, speakerId });
+  const firstTs = Math.min(...tracks.flatMap(t => t.positions.map(p => p.timestamp)));
 
   return {
     speakerId,
-    scores: Object.fromEntries(speakerScores),
-    speakerWindows,
+    scores,
+    speakerWindows: [{ start: firstTs, end: lastTs, speakerId }],
+    transcription: speechSegments,
+    method: speechWindows.length > 0 ? 'whisper-correlated' : 'mar-only',
   };
 }

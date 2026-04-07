@@ -12,6 +12,7 @@ import { detectSpeaker } from './speaker.mjs';
 import { smoothCropTrack } from './smoother.mjs';
 import { generateCropData } from './crop-generator.mjs';
 import { extractFrames, extractAudioRMS } from './frame-extractor.mjs';
+import { transcribeSegment } from './whisper.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3000');
@@ -126,10 +127,13 @@ app.post('/api/analyze', async (req, res) => {
     console.log(`[analyze] Tracking faces...`);
     const tracks = trackFaces(detections);
 
-    // 6. Speaker detection (MAR)
-    console.log(`[analyze] Detecting speaker...`);
-    const audioRMS = await extractAudioRMS(videoPath, startTime, endTime);
-    const speakerInfo = detectSpeaker(tracks, audioRMS, marThreshold);
+    // 6. Whisper transcription for speaker correlation
+    console.log(`[analyze] Transcribing audio (Groq Whisper)...`);
+    const speechSegments = await transcribeSegment(videoPath, startTime, endTime || startTime + 20);
+
+    // 7. Speaker detection (MAR + Whisper correlation — same as InstaCut production)
+    console.log(`[analyze] Detecting speaker (${speechSegments.length} speech segments)...`);
+    const speakerInfo = detectSpeaker(tracks, speechSegments, marThreshold);
 
     // 7. Generate smooth crop data
     console.log(`[analyze] Generating crop data (mode=${mode})...`);
