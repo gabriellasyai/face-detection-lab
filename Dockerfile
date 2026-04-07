@@ -19,15 +19,12 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 
-# Download ONNX models from InsightFace
+# Download ONNX models from HuggingFace (InsightFace buffalo_l)
 RUN mkdir -p models && \
-    curl -L -o /tmp/buffalo_l.zip "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip" && \
-    unzip /tmp/buffalo_l.zip -d /tmp/buffalo_l && \
-    cp /tmp/buffalo_l/buffalo_l/det_10g.onnx models/ && \
-    cp /tmp/buffalo_l/buffalo_l/2d106det.onnx models/ && \
-    cp /tmp/buffalo_l/buffalo_l/w600k_r50.onnx models/ && \
-    rm -rf /tmp/buffalo_l /tmp/buffalo_l.zip && \
-    echo "Models: $(ls -lh models/)"
+    curl -L -o models/det_10g.onnx "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/insightface/models/buffalo_l/det_10g.onnx" && \
+    curl -L -o models/2d106det.onnx "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/insightface/models/buffalo_l/2d106det.onnx" && \
+    curl -L -o models/w600k_r50.onnx "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/insightface/models/buffalo_l/w600k_r50.onnx" && \
+    echo "Models downloaded:" && ls -lh models/
 
 # Copy app
 COPY src/ ./src/
