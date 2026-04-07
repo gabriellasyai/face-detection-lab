@@ -74,11 +74,17 @@ export async function extractLandmarks(imagePath, bbox) {
   const output = results[sess.outputNames[0]].data;
 
   // Parse 106 landmarks (x, y pairs)
+  // 2d106det outputs coords in range ~[-1, 1], decode: pixel = (val + 1) * (INPUT_SIZE / 2)
   const landmarks = [];
   for (let i = 0; i < 106; i++) {
-    // Landmarks are in crop space [0, INPUT_SIZE], convert back to normalized face space
-    const lx = output[i * 2] / INPUT_SIZE;
-    const ly = output[i * 2 + 1] / INPUT_SIZE;
+    const rawX = output[i * 2];
+    const rawY = output[i * 2 + 1];
+    // Decode to pixel coords in the 192x192 crop
+    const px = (rawX + 1) * (INPUT_SIZE / 2);
+    const py = (rawY + 1) * (INPUT_SIZE / 2);
+    // Normalize to [0, 1] within crop
+    const lx = px / INPUT_SIZE;
+    const ly = py / INPUT_SIZE;
     // Convert to full image normalized coords
     landmarks.push([
       cx1 + lx * (cx2 - cx1),

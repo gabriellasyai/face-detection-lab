@@ -99,10 +99,11 @@ app.post('/api/analyze', async (req, res) => {
 
     // 3. Extract landmarks for faces with detections
     console.log(`[analyze] Extracting landmarks...`);
-    for (const det of detections) {
+    for (let fi = 0; fi < detections.length; fi++) {
+      const det = detections[fi];
       for (const face of det.faces) {
         face.landmarks = await extractLandmarks(
-          detections[0]?.faces[0] ? frames[detections.indexOf(det)].path : null,
+          frames[fi].path,
           face.bbox
         );
       }

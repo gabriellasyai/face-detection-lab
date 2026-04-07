@@ -26,24 +26,49 @@ export function generateCropData(tracks, speakerInfo, opts = {}) {
 
   // Auto or Focus mode: single crop following speaker
   const speakerTrack = tracks.find(t => t.id === speakerInfo.speakerId) || tracks[0];
-  const padding = mode === 'focus' ? focusPadding * 0.5 : focusPadding; // Focus = tighter crop
+
+  // Target output aspect ratio: 9:16 portrait
+  // In normalized [0,1] coords, width and height represent different pixel ranges
+  // (e.g., for 16:9 source: width=1 means 1920px, height=1 means 1080px).
+  // To get a 9:16 crop from 16:9 source, we compute in normalized space:
+  //   cropH_norm = cropW_norm * (srcW/srcH) / (outW/outH)
+  // For 16:9 src → 9:16 out: cropH = cropW * (16/9) / (9/16) = cropW * 3.16
+  // This means height easily exceeds 1.0. So we size based on what fits.
+  //
+  // Strategy: set cropH to cover most of the vertical frame (e.g., 0.85),
+  // then derive cropW from the aspect ratio.
+  const sourceAspect = 16 / 9;  // source video W/H
+  const targetAspect = 9 / 16;  // desired output W/H
+
+  // Height-first sizing: use most of the frame vertically
+  const baseH = mode === 'focus' ? 0.80 : 0.95;
+  const cropH = baseH / zoomLevel;
+  // Derive width from height to maintain 9:16 output aspect
+  // cropW_pixels / cropH_pixels = 9/16
+  // (cropW * srcW) / (cropH * srcH) = 9/16
+  // cropW = cropH * (srcH / srcW) * (9/16)
+  const cropW = cropH * (1 / sourceAspect) * targetAspect;
+  // For baseH=0.88: cropW = 0.88 * 0.5625 * 0.5625 = 0.278
+  // That gives about 0.28 width — good for framing one person
 
   const segments = speakerTrack.positions.map(pos => {
     const [x1, y1, x2, y2] = pos.bbox;
-    const faceW = x2 - x1;
-    const faceH = y2 - y1;
     const faceCx = (x1 + x2) / 2;
     const faceCy = (y1 + y2) / 2;
 
-    // Crop region: face center with padding
-    const cropW = faceW * (1 + padding * 2) / zoomLevel;
-    const cropH = faceH * (1 + padding * 2) / zoomLevel;
+    // Position the face in the upper third of the crop (rule of thirds)
+    // Face center should be at ~1/3 from top of the crop region
+    const cropCy = faceCy + cropH * (0.5 - 0.33);
+
+    // Clamp crop region to stay within frame bounds
+    const clampedCx = Math.max(cropW / 2, Math.min(1 - cropW / 2, faceCx));
+    const clampedCy = Math.max(cropH / 2, Math.min(1 - cropH / 2, cropCy));
 
     return {
       start: pos.timestamp,
       end: pos.timestamp + 0.5, // Will be overridden by next segment
-      crop_x: faceCx,
-      crop_y: faceCy,
+      crop_x: clampedCx,
+      crop_y: clampedCy,
       crop_width: cropW,
       crop_height: cropH,
     };
@@ -69,15 +94,25 @@ function generateSplit2(tracks, speakerInfo) {
   const listener = tracks.find(t => t.id !== speaker.id) || tracks[1];
 
   const makeSegments = (track) => {
+    const sourceAspect = 16 / 9;
+    // Split2: each half is 1080x960, so output aspect = 1080/960 = 9/8
+    const splitAspect = 9 / 8;
+    const cropH = 0.85;
+    const cropW = cropH * (1 / sourceAspect) * splitAspect;
     return track.positions.map((pos, i, arr) => {
       const [x1, y1, x2, y2] = pos.bbox;
+      const faceCx = (x1 + x2) / 2;
+      const faceCy = (y1 + y2) / 2;
+      const cropCy = faceCy + cropH * (0.5 - 0.33);
+      const clampedCx = Math.max(cropW / 2, Math.min(1 - cropW / 2, faceCx));
+      const clampedCy = Math.max(cropH / 2, Math.min(1 - cropH / 2, cropCy));
       return {
         start: pos.timestamp,
         end: i < arr.length - 1 ? arr[i + 1].timestamp : pos.timestamp + 0.5,
-        crop_x: (x1 + x2) / 2,
-        crop_y: (y1 + y2) / 2,
-        crop_width: (x2 - x1) * 2,
-        crop_height: (y2 - y1) * 2,
+        crop_x: clampedCx,
+        crop_y: clampedCy,
+        crop_width: cropW,
+        crop_height: cropH,
       };
     });
   };

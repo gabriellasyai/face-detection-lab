@@ -1,19 +1,25 @@
 /**
  * ByteTrack-style face tracker
- * Assigns consistent IDs to faces across frames using IoU + optional embeddings
+ * Assigns consistent IDs to faces across frames using IoU + center distance + optional embeddings
  */
 
 import munkres from 'munkres-js';
 import { cosineSimilarity } from './arcface.mjs';
 
-let nextTrackId = 0;
-
 /**
  * Track faces across frames.
  * @param {Array<{timestamp: number, faces: Array}>} detections
+ * @param {object} opts - { costThreshold, minTrackLength, maxLost }
  * @returns {Array<{id: number, positions: Array<{timestamp, bbox, confidence, landmarks, mar}>}>}
  */
-export function trackFaces(detections) {
+export function trackFaces(detections, opts = {}) {
+  const {
+    costThreshold = 0.55,  // Lowered from 0.7 — allows more matches at low fps
+    minTrackLength = 5,    // Tracks with fewer detections are discarded as noise
+    maxLost = 8,           // Frames a track can be "lost" before being finished (generous for 2fps)
+  } = opts;
+
+  let nextTrackId = 0; // Reset per call
   const tracks = []; // Active tracks: {id, positions, lastBbox, lastEmbedding, lost}
   const finished = [];
 
@@ -36,17 +42,22 @@ export function trackFaces(detections) {
     }
 
     // Build cost matrix: tracks × detections
+    // Use combination of IoU and center distance for robustness at low fps
     const costMatrix = [];
     for (const track of tracks) {
       const row = [];
       for (const det of dets) {
         const iouScore = iou(track.lastBbox, det.bbox);
+        const distScore = 1 - centerDistance(track.lastBbox, det.bbox);  // 1 = same position, 0 = far apart
         let embScore = 0;
         if (track.lastEmbedding && det.embedding) {
           embScore = cosineSimilarity(track.lastEmbedding, det.embedding);
         }
-        // Combined cost (lower is better): 1 - weighted_score
-        const score = 0.6 * iouScore + 0.4 * embScore;
+        // Blend: use whichever geometric metric is higher (IoU or distance),
+        // since at low fps IoU can be 0 even for the same person
+        const geoScore = Math.max(iouScore, distScore);
+        const hasEmb = track.lastEmbedding && det.embedding;
+        const score = hasEmb ? 0.5 * geoScore + 0.5 * embScore : geoScore;
         row.push(1 - score);
       }
       costMatrix.push(row);
@@ -68,7 +79,7 @@ export function trackFaces(detections) {
     for (const [tIdx, dIdx] of assignments) {
       if (tIdx >= tracks.length || dIdx >= dets.length) continue;
       const cost = costMatrix[tIdx][dIdx];
-      if (cost > 0.7) continue; // Too different, don't match
+      if (cost > costThreshold) continue; // Too different, don't match
 
       tracks[tIdx].positions.push({ timestamp: ts, ...dets[dIdx] });
       tracks[tIdx].lastBbox = dets[dIdx].bbox;
@@ -82,7 +93,7 @@ export function trackFaces(detections) {
     for (let i = 0; i < tracks.length; i++) {
       if (!matchedTracks.has(i)) {
         tracks[i].lost++;
-        if (tracks[i].lost > 5) {
+        if (tracks[i].lost > maxLost) {
           // Track lost too long — finish it
           finished.push({ id: tracks[i].id, positions: tracks[i].positions });
           tracks.splice(i, 1);
@@ -110,9 +121,12 @@ export function trackFaces(detections) {
     finished.push({ id: track.id, positions: track.positions });
   }
 
+  // Filter out short tracks (noise / false detections)
+  const filtered = finished.filter(t => t.positions.length >= minTrackLength);
+
   // Sort by number of positions (most prominent first)
-  finished.sort((a, b) => b.positions.length - a.positions.length);
-  return finished;
+  filtered.sort((a, b) => b.positions.length - a.positions.length);
+  return filtered;
 }
 
 function iou(a, b) {
@@ -124,4 +138,24 @@ function iou(a, b) {
   const areaA = (a[2] - a[0]) * (a[3] - a[1]);
   const areaB = (b[2] - b[0]) * (b[3] - b[1]);
   return inter / (areaA + areaB - inter + 1e-6);
+}
+
+/**
+ * Normalized center distance between two bboxes.
+ * Returns a value in [0, 1] where 0 = same center, 1 = max distance apart (diagonal of unit square).
+ * Useful when IoU is 0 but faces are nearby (low fps with face movement).
+ */
+function centerDistance(a, b) {
+  const cxA = (a[0] + a[2]) / 2;
+  const cyA = (a[1] + a[3]) / 2;
+  const cxB = (b[0] + b[2]) / 2;
+  const cyB = (b[1] + b[3]) / 2;
+  const dx = cxA - cxB;
+  const dy = cyA - cyB;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  // Normalize: max possible distance in normalized coords is sqrt(2) ≈ 1.414
+  // But faces are typically within 0.3 of each other, so use 0.3 as "max reasonable distance"
+  // Beyond 0.3, score = 0
+  const maxDist = 0.3;
+  return Math.min(dist, maxDist) / maxDist;
 }
